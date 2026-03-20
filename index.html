@@ -4,75 +4,346 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HRM Dual - Puls na Żywo</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #121212; color: white; margin: 0; }
-        #heart-rate { font-size: 8rem; font-weight: bold; color: #ff4b2b; margin: 20px 0; }
-        #status { color: #888; margin-bottom: 20px; }
-        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; border: none; border-radius: 50px; background: #ff4b2b; color: white; transition: 0.3s; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #121212; 
+            color: white; 
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .title h1 { font-size: 2.5rem; color: #ff4b2b; }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        button { 
+            padding: 12px 24px; 
+            font-size: 1rem; 
+            cursor: pointer; 
+            border: none; 
+            border-radius: 8px; 
+            background: #ff4b2b; 
+            color: white; 
+            transition: 0.3s;
+        }
         button:hover { background: #ff6a4d; transform: scale(1.05); }
+        button:disabled { background: #666; cursor: not-allowed; transform: scale(1); }
+        .status-row {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .status-item {
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 4px solid #ff4b2b;
+            flex: 1;
+            min-width: 200px;
+        }
+        .status-item h3 { color: #888; font-size: 0.9rem; margin-bottom: 8px; text-transform: uppercase; }
+        .status-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #ff4b2b;
+        }
+        .status-value.speed { color: #00bfff; }
+        .status-value.status-text { font-size: 1rem; color: #888; }
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+            margin-top: 30px;
+        }
+        .chart-box {
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        .chart-box h2 {
+            margin-bottom: 15px;
+            color: #ff4b2b;
+            font-size: 1.3rem;
+        }
+        .chart-box canvas { max-height: 400px; }
         .heart { animation: beat 1s infinite; display: inline-block; }
         @keyframes beat {
             0% { transform: scale(1); }
             15% { transform: scale(1.2); }
             30% { transform: scale(1); }
         }
+        @media (max-width: 768px) {
+            .charts-container { grid-template-columns: 1fr; }
+            .header { flex-direction: column; align-items: flex-start; }
+            .title h1 { font-size: 1.8rem; }
+        }
     </style>
 </head>
 <body>
+    <div class="container">
+        <div class="header">
+            <div class="title">
+                <h1>HRM Dual + GPS <span class="heart">❤️</span></h1>
+            </div>
+            <div class="controls">
+                <button id="connectBtn">Połącz z HRM</button>
+                <button id="gpsBtn">Włącz GPS</button>
+                <button id="clearBtn" disabled>Wyczyść dane</button>
+            </div>
+        </div>
 
-    <div id="status">Urządzenie niepołączone</div>
-    <div id="heart-rate">--</div>
-    <div id="label">BPM <span class="heart">❤️</span></div>
-    <br>
-    <button id="connectBtn">Połącz z HRM-Dual</button>
+        <div class="status-row">
+            <div class="status-item">
+                <h3>Tętno</h3>
+                <div class="status-value" id="heart-rate">--</div>
+                <small id="hrStatus" style="color: #666;">BPM</small>
+            </div>
+            <div class="status-item">
+                <h3>Prędkość GPS</h3>
+                <div class="status-value speed" id="gps-speed">--</div>
+                <small id="speedStatus" style="color: #666;">km/h</small>
+            </div>
+            <div class="status-item">
+                <h3>Połączenie</h3>
+                <div class="status-value status-text" id="status">Urządzenie niepołączone</div>
+            </div>
+        </div>
+
+        <div class="charts-container">
+            <div class="chart-box">
+                <h2>Tętno - Wykres Live</h2>
+                <canvas id="hrChart"></canvas>
+            </div>
+
+        </div>
+    </div>
 
     <script>
+        // Configuration
+        const MAX_DATA_POINTS = 60; // Maximum data points to display
+        const UPDATE_INTERVAL = 1000; // 1 second
+        
+        // State
+        let heartRateData = [];
+        let speedData = [];
+        let timeLabels = [];
+        let gpsEnabled = false;
+        let bluetoothConnected = false;
+        let watchId = null;
+
+        // Elements
         const connectBtn = document.getElementById('connectBtn');
+        const gpsBtn = document.getElementById('gpsBtn');
+        const clearBtn = document.getElementById('clearBtn');
         const hrDisplay = document.getElementById('heart-rate');
+        const speedDisplay = document.getElementById('gps-speed');
         const statusDisplay = document.getElementById('status');
 
+        // Chart instances
+        let hrChart;
+
+        // Initialize charts
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: true,
+                animation: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 200,
+                        ticks: { color: '#888' },
+                        grid: { color: '#333' }
+                    },
+                    x: {
+                        ticks: { color: '#888' },
+                        grid: { color: '#333' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            };
+
+            // Heart Rate Chart
+            const hrCtx = document.getElementById('hrChart').getContext('2d');
+            hrChart = new Chart(hrCtx, {
+                type: 'line',
+                data: {
+                    labels: timeLabels,
+                    datasets: [{
+                        label: 'BPM',
+                        data: heartRateData,
+                        borderColor: '#ff4b2b',
+                        backgroundColor: 'rgba(255, 75, 43, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        ...chartOptions.scales,
+                        y: {
+                            ...chartOptions.scales.y,
+                            max: 200,
+                            title: { display: true, text: 'BPM' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update charts with new data
+        function updateCharts() {
+            // Update time labels
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            if (timeLabels.length >= MAX_DATA_POINTS) {
+                timeLabels.shift();
+            }
+            timeLabels.push(timeStr);
+
+            // Update Heart Rate Chart
+            if (hrChart) {
+                hrChart.data.labels = timeLabels;
+                hrChart.data.datasets[0].data = heartRateData;
+                hrChart.update('none');
+            }
+        }
+
+        // Add heart rate data
+        function addHeartRateData(value) {
+            if (heartRateData.length >= MAX_DATA_POINTS) {
+                heartRateData.shift();
+            }
+            heartRateData.push(value);
+            updateCharts();
+        }
+
+        // Add speed data
+        function addSpeedData(value) {
+            if (speedData.length >= MAX_DATA_POINTS) {
+                speedData.shift();
+            }
+            speedData.push(value.toFixed(1));
+            updateCharts();
+        }
+
+        // Clear all data
+        function clearAllData() {
+            heartRateData = [];
+            speedData = [];
+            timeLabels = [];
+            updateCharts();
+        }
+
+        // Bluetooth Connection
         connectBtn.addEventListener('click', async () => {
             try {
                 statusDisplay.innerText = "Szukanie urządzenia...";
-                
-                // Wywołanie okna parowania Bluetooth
+                connectBtn.disabled = true;
+
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: ['heart_rate'] }]
+                    filters: [{ services: ['heart_rate'] }],
+                    optionalServices: []
                 });
 
                 statusDisplay.innerText = "Łączenie...";
                 const server = await device.gatt.connect();
-                
-                // Pobranie serwisu Heart Rate
                 const service = await server.getPrimaryService('heart_rate');
-                
-                // Pobranie charakterystyki pomiaru
                 const characteristic = await service.getCharacteristic('heart_rate_measurement');
 
-                // Rozpoczęcie powiadomień
                 await characteristic.startNotifications();
-                
-                statusDisplay.innerText = "Połączono z: " + device.name;
-                connectBtn.style.display = "none";
+
+                bluetoothConnected = true;
+                statusDisplay.innerText = "✓ " + (device.name || "HRM Device");
+                connectBtn.innerText = "Rozłącz HRM";
+                clearBtn.disabled = false;
 
                 characteristic.addEventListener('characteristicvaluechanged', (event) => {
                     const value = event.target.value;
-                    // Pierwszy bajt to flagi, drugi to zazwyczaj tętno (Uint8)
                     const heartRate = value.getUint8(1);
                     hrDisplay.innerText = heartRate;
+                    addHeartRateData(heartRate);
                 });
 
                 device.addEventListener('gattserverdisconnected', () => {
-                    statusDisplay.innerText = "Rozłączono. Odśwież stronę.";
+                    bluetoothConnected = false;
+                    statusDisplay.innerText = "✗ Rozłączono";
                     hrDisplay.innerText = "--";
-                    connectBtn.style.display = "block";
+                    connectBtn.innerText = "Połącz z HRM";
+                    connectBtn.disabled = false;
                 });
 
             } catch (error) {
-                console.log("Błąd: " + error);
-                statusDisplay.innerText = "Błąd: " + error.message;
+                console.error("Bluetooth Error:", error);
+                statusDisplay.innerText = "Błąd Bluetooth";
+                connectBtn.disabled = false;
             }
         });
+
+        // GPS Geolocation
+        gpsBtn.addEventListener('click', () => {
+            if (!gpsEnabled) {
+                gpsEnabled = true;
+                gpsBtn.innerText = "Wyłącz GPS";
+                clearBtn.disabled = false;
+
+                if ('geolocation' in navigator) {
+                    watchId = navigator.geolocation.watchPosition(
+                        (position) => {
+                            const speed = position.coords.speed;
+                            const speedKmh = speed ? (speed * 3.6).toFixed(1) : 0;
+                            speedDisplay.innerText = speedKmh;
+                        },
+                        (error) => {
+                            console.error("GPS Error:", error);
+                            speedDisplay.innerText = "Błąd";
+                        },
+                        {
+                            enableHighAccuracy: true,
+                            timeout: 5000,
+                            maximumAge: 1000
+                        }
+                    );
+                } else {
+                    statusDisplay.innerText = "GPS niedostępny";
+                }
+            } else {
+                gpsEnabled = false;
+                gpsBtn.innerText = "Włącz GPS";
+                if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                }
+                speedDisplay.innerText = "--";
+            }
+        });
+
+        // Clear data button
+        clearBtn.addEventListener('click', () => {
+            if (confirm('Czy na pewno wyczyścić wszystkie dane?')) {
+                clearAllData();
+            }
+        });
+
+        // Initialize
+        initCharts();
     </script>
 </body>
 </html>
