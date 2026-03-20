@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HRM Dual - Puls na Żywo</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #121212; color: white; margin: 0; }
+        #heart-rate { font-size: 8rem; font-weight: bold; color: #ff4b2b; margin: 20px 0; }
+        #status { color: #888; margin-bottom: 20px; }
+        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; border: none; border-radius: 50px; background: #ff4b2b; color: white; transition: 0.3s; }
+        button:hover { background: #ff6a4d; transform: scale(1.05); }
+        .heart { animation: beat 1s infinite; display: inline-block; }
+        @keyframes beat {
+            0% { transform: scale(1); }
+            15% { transform: scale(1.2); }
+            30% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status">Urządzenie niepołączone</div>
+    <div id="heart-rate">--</div>
+    <div id="label">BPM <span class="heart">❤️</span></div>
+    <br>
+    <button id="connectBtn">Połącz z HRM-Dual</button>
+
+    <script>
+        const connectBtn = document.getElementById('connectBtn');
+        const hrDisplay = document.getElementById('heart-rate');
+        const statusDisplay = document.getElementById('status');
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                statusDisplay.innerText = "Szukanie urządzenia...";
+                
+                // Wywołanie okna parowania Bluetooth
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: ['heart_rate'] }]
+                });
+
+                statusDisplay.innerText = "Łączenie...";
+                const server = await device.gatt.connect();
+                
+                // Pobranie serwisu Heart Rate
+                const service = await server.getPrimaryService('heart_rate');
+                
+                // Pobranie charakterystyki pomiaru
+                const characteristic = await service.getCharacteristic('heart_rate_measurement');
+
+                // Rozpoczęcie powiadomień
+                await characteristic.startNotifications();
+                
+                statusDisplay.innerText = "Połączono z: " + device.name;
+                connectBtn.style.display = "none";
+
+                characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                    const value = event.target.value;
+                    // Pierwszy bajt to flagi, drugi to zazwyczaj tętno (Uint8)
+                    const heartRate = value.getUint8(1);
+                    hrDisplay.innerText = heartRate;
+                });
+
+                device.addEventListener('gattserverdisconnected', () => {
+                    statusDisplay.innerText = "Rozłączono. Odśwież stronę.";
+                    hrDisplay.innerText = "--";
+                    connectBtn.style.display = "block";
+                });
+
+            } catch (error) {
+                console.log("Błąd: " + error);
+                statusDisplay.innerText = "Błąd: " + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
